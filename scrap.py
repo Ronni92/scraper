@@ -1,80 +1,82 @@
-import requests #para peticiones web
 import tkinter as tk #crea interfaz gráfica
-from tkinter import messagebox
-from openpyxl import Workbook #crea los archivos excel
-import os #manejo de carpetas y archivos
+from tkinter import messagebox #muestra mensajes
+from openpyxl import Workbook #crea el archivo excel
+from playwright.sync_api import sync_playwright #control de navegador automático
+from datetime import datetime #fecha actual
+import time # simula pausas
 
 
 # ---------------------------
-# 🔐 COOKIES (REEMPLAZA)
+# 🔧 LIMPIAR NÚMEROS
 # ---------------------------
-cookies = {
-    "sessionid": "25964836367%3AWJbaRGGSHXWkMF%3A3%3AAYjtYX0vB3PektLsZhEZ8PuljwVr0G0WJ0QcBUfm9g",
-    "csrftoken": "07OFJZR8mDhuh8Sc8OIAflTl0gIeKAr4"
-}
+import re
+
+def limpiar_numero(texto):
+    texto = texto.lower().replace("seguidores", "").replace("seguidos", "").replace("publicaciones", "").strip()
+
+    # eliminar espacios
+    texto = texto.replace(" ", "")
+
+    # caso millones (ej: 1.2m o 1,2m)
+    if "m" in texto:
+        num = texto.replace("m", "").replace(",", ".")
+        return int(float(num) * 1_000_000)
+
+    # caso miles (ej: 1.2k o 1,2k)
+    if "k" in texto:
+        num = texto.replace("k", "").replace(",", ".")
+        return int(float(num) * 1_000)
+
+    # caso miles con punto (ej: 11.121)
+    texto = texto.replace(".", "").replace(",", "")
+
+    return int(re.findall(r"\d+", texto)[0])
 
 # ---------------------------
-# 🔧 HEADERS CORRECTOS
+# 📡 OBTENER INFO (PLAYWRIGHT)
 # ---------------------------
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    "Accept": "*/*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "X-IG-App-ID": "936619743392459",
-    "Referer": "https://www.instagram.com/",
-    "Origin": "https://www.instagram.com"
-}
+from playwright.sync_api import sync_playwright
+import time
 
-# ---------------------------
-# 📡 OBTENER INFO
-# ---------------------------
 def obtener_info(usuario):
-    try:
-        url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={usuario}"
+    with sync_playwright() as p:
 
-        session = requests.Session()
-        session.headers.update(headers)
-        session.cookies.update(cookies)
+        context = p.chromium.launch_persistent_context(
+            user_data_dir="mi_instagram",
+            headless=False,
+            slow_mo=500
+        )
 
-        response = session.get(url)
+        page = context.new_page()
 
-        print("STATUS:", response.status_code)
+        # 🔥 Abre Instagram
+        page.goto("https://www.instagram.com/")
+        time.sleep(5)  # tiempo para loguearte la primera vez
 
-        if response.status_code != 200:
-            print("RESPUESTA:", response.text[:300])
-            return None
+        # 🔥 Luego va al perfil
+        page.goto(f"https://www.instagram.com/{usuario}/")
 
-        data = response.json()
+        page.wait_for_selector("header", timeout=60000)
+        time.sleep(3)
 
-        # ✅ VALIDACIÓN CORRECTA
-        if "data" not in data or "user" not in data["data"]:
-            print("Usuario no existe o error de acceso")
-            return None
+        publicaciones = page.locator("header section ul li").nth(0).inner_text()
+        seguidores = page.locator("header section ul li").nth(1).inner_text()
+        seguidos = page.locator("header section ul li").nth(2).inner_text()
 
-        user = data["data"]["user"]
+        return publicaciones, seguidores, seguidos
 
-        publicaciones = user["edge_owner_to_timeline_media"]["count"]
-        seguidores = user["edge_followed_by"]["count"]
-        seguidos = user["edge_follow"]["count"]
-
-        posts = user["edge_owner_to_timeline_media"]["edges"]
-
-        return publicaciones, seguidores, seguidos, posts
-    except Exception as e:
-        print("Error:", e)
-        return None
 # ---------------------------
 # 📊 GUARDAR EXCEL
 # ---------------------------
-from datetime import datetime #fecha
 def guardar_excel(usuario, datos):
-    wb = Workbook()
+    wb = Workbook() 
     ws = wb.active
 
     ws.append(["Usuario", "Posts", "Seguidores", "Seguidos", "Fecha"])
     ws.append([usuario, datos[0], datos[1], datos[2], datetime.now()])
 
     wb.save(f"{usuario}_datos.xlsx")
+
 
 # ---------------------------
 # 🎯 BOTÓN
@@ -89,21 +91,21 @@ def ejecutar():
     label.config(text="Procesando...")
     ventana.update()
 
-    datos = obtener_info(usuario)
+    datos = obtener_info(usuario) #ejecuta scraping
 
     if datos:
         guardar_excel(usuario, datos)
-
         label.config(text="✅ Completado")
-        messagebox.showinfo("Listo", "Datos y publicaciones descargadas")
+        messagebox.showinfo("Listo", "Datos descargados correctamente")
     else:
-        label.config(text="❌ Error (revisa cookies)")
+        label.config(text="❌ Error")
+
 
 # ---------------------------
 # 🖥️ INTERFAZ
 # ---------------------------
 ventana = tk.Tk()
-ventana.title("Instagram Scraper (Cookies)")
+ventana.title("Instagram Scraper (Playwright)")
 ventana.geometry("400x250")
 
 tk.Label(ventana, text="Usuario de Instagram").pack(pady=10)
@@ -115,5 +117,4 @@ tk.Button(ventana, text="Descargar", command=ejecutar).pack(pady=10)
 
 label = tk.Label(ventana, text="")
 label.pack()
-
 ventana.mainloop()
